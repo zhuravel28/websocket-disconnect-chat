@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebSocket-чат з відключенням</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #e0f7fa, #e8eaf6);
+    }
+
+    .chat-wrapper {
+      width: 100%;
+      max-width: 720px;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+      padding: 20px 22px 18px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      font-weight: 700;
+      color: #263238;
+    }
+
+    #chat {
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+      height: 320px;
+      overflow-y: auto;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      background: #fafafa;
+    }
+
+    .msg {
+      margin: 4px 0;
+      font-size: 14px;
+      color: #263238;
+    }
+
+    .me {
+      margin: 4px 0;
+      font-size: 14px;
+      color: #1e88e5;
+      font-weight: 500;
+    }
+
+    .system {
+      margin: 4px 0;
+      font-size: 13px;
+      color: #757575;
+      font-style: italic;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    #messageInput {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #cfd8dc;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    #messageInput:focus {
+      border-color: #1e88e5;
+      box-shadow: 0 0 0 2px rgba(30,136,229,0.15);
+    }
+
+    button {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.05s, box-shadow 0.15s;
+      white-space: nowrap;
+    }
+
+    #sendBtn {
+      background: #1e88e5;
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(30,136,229,0.35);
+    }
+
+    #sendBtn:hover:not(:disabled) {
+      background: #1565c0;
+    }
+
+    #disconnectBtn {
+      background: #ef5350;
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(239,83,80,0.35);
+    }
+
+    #disconnectBtn:hover:not(:disabled) {
+      background: #d32f2f;
+    }
+
+    button:disabled {
+      cursor: default;
+      opacity: 0.6;
+      box-shadow: none;
+      transform: none;
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-wrapper">
+    <h2>WebSocket-чат</h2>
+
+    <div id="chat"></div>
+
+    <div class="row">
+      <input id="messageInput" placeholder="Введіть повідомлення..." />
+      <button id="sendBtn">Відправити</button>
+      <button id="disconnectBtn">Відключитися</button>
+    </div>
+  </div>
+<script>
+// 🔹 якщо id ще немає – створюємо та зберігаємо
+if(!localStorage.clientId){
+    localStorage.clientId = "user_" + Date.now() + "_" + Math.random();
+}
+</script>
+  <script>
+    const chat          = document.getElementById("chat");
+    const messageInput  = document.getElementById("messageInput");
+    const sendBtn       = document.getElementById("sendBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+
+    const ws = new WebSocket(`ws://${location.host}`);
+
+    function addMessage(text, cls = "msg") {
+      const p = document.createElement("p");
+      p.className = cls;
+      p.textContent = text;
+      chat.appendChild(p);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // Отримання повідомлень від сервера
+    ws.addEventListener("message", (event) => {
+      addMessage(event.data, "msg");
+    });
+
+    // Надсилання повідомлення
+    sendBtn.addEventListener("click", () => {
+      const text = messageInput.value.trim();
+      if (!text || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(text);
+      addMessage("Я: " + text, "me");
+      messageInput.value = "";
+    });
+
+    messageInput.addEventListener("keyup", (e) => {
+      if (e.key === "Enter") sendBtn.click();
+    });
+
+    // Кнопка "Відключитися": HTTP-запит + блокування інтерфейсу
+    disconnectBtn.addEventListener("click", async () => {
+      try {
+        const res = await fetch(`/disconnect?id=${encodeURIComponent(localStorage.clientId)}`);
+        if (!res.ok) throw new Error("Помилка відключення");
+
+        addMessage("Ви відключились від чату.", "system");
+
+        messageInput.disabled  = true;
+        sendBtn.disabled       = true;
+        disconnectBtn.disabled = true;
+
+        ws.close();
+      } catch (err) {
+        console.error(err);
+        addMessage("Не вдалося відключитися від чату.", "system");
+      }
+    });
+
+    // Якщо сервер закрив WebSocket
+    ws.addEventListener("close", () => {
+      addMessage("З’єднання з чатом закрито.", "system");
+      messageInput.disabled  = true;
+      sendBtn.disabled       = true;
+      disconnectBtn.disabled = true;
+    });
+  </script>
+</body>
+</html>
+
+
