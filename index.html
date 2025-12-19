@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <title>Чат на WebSocket</title>
+  <style>
+
+body {
+  font-family: Arial, sans-serif;
+  max-width: 650px;
+  margin: 20px auto;
+  background: #f3f5f7;
+}
+
+h2 {
+  text-align: center;
+  color: #222;
+  margin-bottom: 15px;
+}
+
+#chat {
+  border: none;
+  height: 350px;
+  overflow-y: auto;
+  padding: 15px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0px 0px 5px rgba(0,0,0,0.15);
+}
+
+.msg {
+  background: #e6f3ff;
+  margin: 4px 0;
+  padding: 6px 10px;
+  width: fit-content;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.msg:nth-child(even){
+  background: #d4ffe1;
+}
+
+.system {
+  font-style: italic;
+  color: #777;
+  font-size: 13px;
+}
+
+#bottomPanel{
+  margin-top: 14px;
+  display: flex;
+  gap: 7px;
+}
+
+#messageInput {
+  flex: 1;
+  padding: 11px;
+  border-radius: 8px;
+  border: 1px solid #bbb;
+  outline: none;
+}
+
+#messageInput:focus{
+  border: 1px solid #0078ff;
+}
+
+.btn{
+  padding: 11px 18px;
+  cursor: pointer;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 14px;
+  border: none;
+}
+
+#sendBtn{
+  background: #0078ff;
+  color: white;
+}
+
+#disconnectBtn{
+  background: #ef3d3d;
+  color: white;
+}
+
+  </style>
+</head>
+<body>
+  <h2>Чат на WebSocket</h2>
+<div id="chat"></div>
+
+<div id="bottomPanel">
+  <input id="messageInput" placeholder="Введіть повідомлення..." />
+  <button id="sendBtn" class="btn">Надіслати</button>
+  <button id="disconnectBtn" class="btn">Відключитися</button>
+</div>
+
+
+  <script>
+    let manualDisconnect = false;
+
+
+  const originalTitle = "Чат на WebSocket";
+  let socket;
+
+  function addSystem(text) {
+    const chat = document.getElementById('chat');
+    const div = document.createElement('div');
+    div.className = 'system';
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function addMessage(from, text) {
+    const chat = document.getElementById('chat');
+    const div = document.createElement('div');
+    div.className = 'msg';
+    div.textContent = from + ': ' + text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function connect() {
+    socket = new WebSocket('ws://localhost:3000');
+
+    socket.onopen = () => {
+      addSystem('Підключено до сервера');
+    };
+
+    socket.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        data = { type: 'chat', from: 'Користувач', text: event.data };
+      }
+
+      if (data.type === 'system') {
+        addSystem(data.text);
+      } else if (data.type === 'chat') {
+        addMessage(data.from || 'Користувач', data.text);
+      }
+
+  
+      if (document.hidden && data.type === 'chat') {
+        document.title = "📩 Нове повідомлення в чаті!";
+        console.log("СПОВІЩЕННЯ: вкладка неактивна, прийшло нове повідомлення");
+      }
+    };
+
+    socket.onclose = () => {
+
+  if (!manualDisconnect) {
+    addSystem("З’єднання втрачено, пробуємо перепідключитися...");
+    setTimeout(connect, 2000);
+    return;
+  }
+
+  addSystem("Ви відключилися від чату");
+
+  document.getElementById('messageInput').disabled = true;
+  document.getElementById('sendBtn').disabled = true;
+  document.getElementById('disconnectBtn').disabled = true;
+};
+
+
+    socket.onerror = (err) => {
+      console.error('Помилка WebSocket:', err);
+      addSystem('Сталася помилка WebSocket');
+    };
+  }
+
+  function sendMessage() {
+    const input = document.getElementById('messageInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      addSystem('Немає з’єднання з сервером');
+      return;
+    }
+
+    socket.send(text);
+    input.value = '';
+  }
+
+ document.getElementById('sendBtn').addEventListener('click', sendMessage);
+
+document.getElementById('disconnectBtn').addEventListener('click', () => {
+  manualDisconnect = true;
+  fetch('http://localhost:3001/disconnect')
+    .then(() => addSystem("Запит на відключення надіслано..."));
+});
+
+document.getElementById('messageInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+
+  connect();
+
+  </script>
+</body>
+</html>

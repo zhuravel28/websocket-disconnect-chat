@@ -1,126 +1,84 @@
-// server.js
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const WebSocket = require("ws");
+const WebSocket = require('ws');
+const http = require('http');
 
 const PORT = 3000;
+const HTTP_PORT = 3001;
 
-// === HTTP-СЕРВЕР ===
-const server = http.createServer((req, res) => {
-  console.log(`${req.method} ${req.url}`);
 
-  // 1) Обробка HTTP-запиту /disconnect
-  if (req.url.startsWith("/disconnect") && req.method === "GET") {
-    handleDisconnectRequest(req, res);
+const server = new WebSocket.Server({ port: PORT });
+
+let nextClientId = 1;
+const clients = new Map(); // ws -> { id }
+
+function broadcast(data) {
+  const msg = JSON.stringify(data);
+  for (const [client] of clients.entries()) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  }
+}
+
+server.on('connection', (ws) => {
+  const clientId = nextClientId++;
+  clients.set(ws, { id: clientId });
+
+  console.log(`Користувач #${clientId} приєднався`);
+  
+  broadcast({
+    type: 'system',
+    text: `Користувач #${clientId} приєднався до чату`,
+  });
+
+  ws.on('message', (messageBuffer) => {
+    const text = messageBuffer.toString();
+    console.log(`Повідомлення від #${clientId}:`, text);
+    
+    broadcast({
+      type: 'chat',
+      from: `Користувач #${clientId}`,
+      text,
+      time: new Date().toISOString(),
+    });
+  });
+
+  ws.on('close', () => {
+    clients.delete(ws);
+    console.log(`Користувач #${clientId} від’єднався`);
+    
+    broadcast({
+      type: 'system',
+      text: `Користувач #${clientId} залишив чат`,
+    });
+  });
+
+  ws.on('error', (err) => {
+    console.error('Помилка WebSocket з’єднання:', err.message);
+  });
+});
+
+console.log(`WebSocket сервер запущено на ws://localhost:${PORT}`);
+
+
+
+
+const httpServer = http.createServer((req, res) => {
+  if (req.url === "/disconnect") {
+
+    
+    for (const [client] of clients.entries()) {
+      client.close();
+    }
+
+    res.writeHead(200);
+    res.end("OK");
     return;
   }
 
-  // 2) Роздача статичних файлів із папки public
-  let urlPath = req.url === "/" ? "/index.html" : req.url;
-  const filePath = path.join(__dirname, "public", urlPath);
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      return res.end("Файл не знайдено");
-    }
-
-    const ext = path.extname(filePath);
-    let contentType = "text/plain; charset=utf-8";
-
-    if (ext === ".html") contentType = "text/html; charset=utf-8";
-    if (ext === ".js")   contentType = "text/javascript; charset=utf-8";
-    if (ext === ".css")  contentType = "text/css; charset=utf-8";
-
-    res.writeHead(200, { "Content-Type": contentType });
-    res.end(data);
-  });
+  res.writeHead(404);
+  res.end("Not found");
 });
 
-// === WebSocket-сервер поверх цього ж HTTP ===
-const wss = new WebSocket.Server({ server });
-
-// Розсилка всім клієнтам
-function broadcast(message, exceptWs = null) {
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN && client !== exceptWs) {
-      client.send(message);
-    }
-  }
-}
-
-// 🔹 Підключення нового клієнта
-wss.on("connection", (ws, req) => {
-  // читаємо clientId з рядка запиту ?id=...
-  const urlObj = new URL(req.url, `http://${req.headers.host}`);
-  let clientId = urlObj.searchParams.get("id");
-
-  // якщо раптом не передали id – згенеруємо (про всяк випадок)
-  if (!clientId) {
-    clientId = "user_" + Date.now() + "_" + Math.random();
-  }
-
-  // зберігаємо id всередині сокета (для відключення по HTTP)
-  ws.clientId = clientId;
-
-  console.log(`Новий клієнт: ${clientId}`);
-
-  // 🔸 повідомлення самому користувачу (без ID)
-  ws.send(`Вітаємо в WebSocket-чаті!`);
-
-  // 🔸 повідомлення іншим (просто "Користувач")
-  broadcast(`Користувач приєднався до чату`, ws);
-
-  // коли користувач надсилає повідомлення
-  ws.on("message", (data) => {
-    const text = data.toString();
-    console.log(`Повідомлення від ${clientId}:`, text);
-    broadcast(`Користувач: ${text}`, ws);
-  });
-
-  // коли WebSocket закривається (закрив вкладку)
-  ws.on("close", () => {
-    console.log(`Клієнт ${clientId} відключився`);
-    broadcast(`Користувач залишив чат`);
-  });
-});
-
-// === ОБРОБКА /disconnect за clientId ===
-function handleDisconnectRequest(req, res) {
-  const urlObj = new URL(req.url, `http://${req.headers.host}`);
-  const clientId = urlObj.searchParams.get("id");
-
-  console.log("Запит /disconnect для ID:", clientId);
-
-  let clientToClose = null;
-
-  for (const ws of wss.clients) {
-    if (ws.clientId === clientId) {
-      clientToClose = ws;
-      break;
-    }
-  }
-
-  if (clientToClose) {
-    // 🔸 повідомляємо самого користувача (без ID у тексті)
-    clientToClose.send(`Вас відключено від чату.`);
-
-    // 🔸 повідомляємо інших
-    broadcast(`Користувач відключився від чату`, clientToClose);
-
-    // закриваємо сокет
-    clientToClose.close();
-  } else {
-    console.log("WebSocket-з’єднання для цього ID не знайдено");
-  }
-
-  // Відповідь на HTTP-запит
-  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("OK");
-}
-
-// Запуск сервера
-server.listen(PORT, () => {
-  console.log(`Сервер запущено на http://localhost:${PORT}`);
+httpServer.listen(HTTP_PORT, () => {
+  console.log("HTTP сервер працює на http://localhost:" + HTTP_PORT);
 });
